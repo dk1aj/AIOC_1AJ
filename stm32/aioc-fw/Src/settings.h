@@ -230,24 +230,42 @@ extern uint32_t settingsRegMap[SETTINGS_REGMAP_SIZE];
 #define SETTINGS_REG_VPTT_TIMCTRL_TIMEOUT_OFFS              0
 #define SETTINGS_REG_VPTT_TIMCTRL_TIMEOUT_MASK              0xFFFFFFFFUL
 
-/* Virtual COS level control register */
+/* Virtual COS level control register (Software Window Discriminator) */
 #define SETTINGS_REG_VCOS_LVLCTRL                           0x92
-#define SETTINGS_REG_VCOS_LVLCTRL_DEFAULT                   (SETTINGS_REG_VCOS_LVLCTRL_THRSHLD_DFLT)
-/* THRSHLD: Virtual COS threshold level */
-#define SETTINGS_REG_VCOS_LVLCTRL_THRSHLD_DFLT              ((uint32_t) 256 << SETTINGS_REG_VCOS_LVLCTRL_THRSHLD_OFFS)
+#define SETTINGS_REG_VCOS_LVLCTRL_DEFAULT                   (SETTINGS_REG_VCOS_LVLCTRL_ON_MARGIN_DFLT | SETTINGS_REG_VCOS_LVLCTRL_OFF_MARGIN_DFLT)
+/* ON_MARGIN: COS ON threshold margin above noise floor (in dB, 0-50 recommended) */
+#define SETTINGS_REG_VCOS_LVLCTRL_ON_MARGIN_DFLT            ((uint32_t) 15 << SETTINGS_REG_VCOS_LVLCTRL_ON_MARGIN_OFFS)
+#define SETTINGS_REG_VCOS_LVLCTRL_ON_MARGIN_OFFS            0
+#define SETTINGS_REG_VCOS_LVLCTRL_ON_MARGIN_MASK            0x000000FFUL
+/* OFF_MARGIN: COS OFF threshold margin above noise floor (in dB, 0-50 recommended) */
+#define SETTINGS_REG_VCOS_LVLCTRL_OFF_MARGIN_DFLT           ((uint32_t) 8 << SETTINGS_REG_VCOS_LVLCTRL_OFF_MARGIN_OFFS)
+#define SETTINGS_REG_VCOS_LVLCTRL_OFF_MARGIN_OFFS           8
+#define SETTINGS_REG_VCOS_LVLCTRL_OFF_MARGIN_MASK           0x0000FF00UL
+/* Legacy threshold field (deprecated, for backward compatibility) */
 #define SETTINGS_REG_VCOS_LVLCTRL_THRSHLD_OFFS              0
 #define SETTINGS_REG_VCOS_LVLCTRL_THRSHLD_MASK              0x0000FFFFUL
 
-/* Virtual COS timing control register */
+/* Virtual COS timing control register (Software Window Discriminator) */
 #define SETTINGS_REG_VCOS_TIMCTRL                           0x94
-#define SETTINGS_REG_VCOS_TIMCTRL_DEFAULT                   (SETTINGS_REG_VCOS_TIMCTRL_TIMEOUT_DFLT)
-/* TIMEOUT: VCOS hang time in milliseconds in 12.4 format.
+#define SETTINGS_REG_VCOS_TIMCTRL_DEFAULT                   (SETTINGS_REG_VCOS_TIMCTRL_HANG_TIME_DFLT | SETTINGS_REG_VCOS_TIMCTRL_ATTACK_TIME_DFLT)
+/* HANG_TIME: VCOS hang time in milliseconds (time to hold COS open after signal drops).
  *
  * Audio-only COS has no separate carrier-off signal, so it must hold COS open
- * briefly after the last sample above threshold. 3000 ms is long enough for
- * longer speech pauses without keeping SvxLink open for minutes.
+ * briefly after the last sample above threshold. 1000 ms is long enough for
+ * normal speech pauses without excessive tail.
  */
-#define SETTINGS_REG_VCOS_TIMCTRL_TIMEOUT_DFLT              ((uint32_t) (3000UL << 4) << SETTINGS_REG_VCOS_TIMCTRL_TIMEOUT_OFFS)
+#define SETTINGS_REG_VCOS_TIMCTRL_HANG_TIME_DFLT            ((uint32_t) 1000UL << SETTINGS_REG_VCOS_TIMCTRL_HANG_TIME_OFFS)
+#define SETTINGS_REG_VCOS_TIMCTRL_HANG_TIME_OFFS            0
+#define SETTINGS_REG_VCOS_TIMCTRL_HANG_TIME_MASK            0x0000FFFFUL
+/* ATTACK_TIME: VCOS attack time in milliseconds (minimum audio duration before COS activates).
+ *
+ * Prevents short clicks or transients from falsely activating COS.
+ * Typical value 80-100 ms for speech detection without excessive delay.
+ */
+#define SETTINGS_REG_VCOS_TIMCTRL_ATTACK_TIME_DFLT          ((uint32_t) 80UL << SETTINGS_REG_VCOS_TIMCTRL_ATTACK_TIME_OFFS)
+#define SETTINGS_REG_VCOS_TIMCTRL_ATTACK_TIME_OFFS          16
+#define SETTINGS_REG_VCOS_TIMCTRL_ATTACK_TIME_MASK          0xFFFF0000UL
+/* Legacy timeout field (deprecated, mapped to HANG_TIME) */
 #define SETTINGS_REG_VCOS_TIMCTRL_TIMEOUT_OFFS              0
 #define SETTINGS_REG_VCOS_TIMCTRL_TIMEOUT_MASK              0x0000FFFFUL
 

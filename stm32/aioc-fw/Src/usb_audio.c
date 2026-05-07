@@ -5,6 +5,7 @@
 #include "tusb.h"
 #include "usb.h"
 #include "cos.h"
+#include "cos_detector.h"
 #include <math.h>
 
 /* The one and only supported sample rate */
@@ -731,6 +732,8 @@ TU_ATTR_FAST_FUNC void tud_audio_feedback_interval_isr(uint8_t func_id, uint32_t
 
 void ADC1_2_IRQHandler (void)
 {
+    static uint16_t sample_counter = 0;
+
     if ( (ADC1->ISR & ADC_ISR_EOS) || (ADC2->ISR & ADC_ISR_EOS) ) {
         int16_t sample = 0;
 
@@ -745,12 +748,19 @@ void ADC1_2_IRQHandler (void)
             sample = ((int32_t) ADC2->DR - 32768) & 0xFFFFU;
         }
 
-        /* Automatic COS */
-        uint16_t cosThreshold = (settingsRegMap[SETTINGS_REG_VCOS_LVLCTRL] & SETTINGS_REG_VCOS_LVLCTRL_THRSHLD_MASK) >> SETTINGS_REG_VCOS_LVLCTRL_THRSHLD_OFFS;
-
-        if (!microphoneMute[1] && ( (sample > cosThreshold) || (sample < -cosThreshold) )) {
-            /* Reset timeout and make sure timer is enabled */
-            TIM17->EGR = TIM_EGR_UG; /* Generate an update event in the timer */
+        /* Software Window Discriminator for Virtual COS */
+        if (!microphoneMute[1]) {
+            cos_detector_process_sample(sample);
+            sample_counter++;
+            
+            /* After each 20 ms block (960 samples @ 48 kHz), update state machine */
+            if (sample_counter >= COS_DETECTOR_BLOCK_SAMPLES) {
+                sample_counter = 0;
+                if (cos_detector_process_block(COS_DETECTOR_BLOCK_SIZE_MS)) {
+                    /* COS state changed - trigger timer to notify host */
+                    TIM17->EGR = TIM_EGR_UG;
+                }
+            }
         }
 
         /* Get volume */
@@ -847,8 +857,8 @@ void TIM17_IRQHandler(void)
             /* Update debug register */
             settingsRegMap[SETTINGS_REG_INFO_AUDIO0] |= SETTINGS_REG_INFO_AIOC0_VCOSSTATE_MASK;
 
-            /* Set COS state */
-            COS_VirtualSetState(0x01);
+            /* Set COS state from detector */
+            COS_VirtualSetState(cos_detector_get_state());
         }
     } else if (flags & TIM_SR_CC1IF) {
         /* The idle timeout (without any action on the ADC) was reached. Disable timer and notify host */
@@ -857,8 +867,8 @@ void TIM17_IRQHandler(void)
         /* Update debug register */
         settingsRegMap[SETTINGS_REG_INFO_AUDIO0] &= ~SETTINGS_REG_INFO_AIOC0_VCOSSTATE_MASK;
 
-        /* Set COS state */
-        COS_VirtualSetState(0x00);
+        /* Set COS state from detector */
+        COS_VirtualSetState(cos_detector_get_state());
     }
 
     TIM17->SR = ~flags;
