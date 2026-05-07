@@ -33,19 +33,12 @@ enum USB_STRING_IDX {
     STR_IDX_DFU_RT
 };
 
-/* CM108 compatibility identity.
- *
- * Linux applications that special-case CM108-compatible audio adapters often
- * look for C-Media's CM108 VID/PID pair. These are firmware defaults only:
- * stored settings in SETTINGS_REG_USBID can still override them until the
- * device settings are reset to defaults.
- */
-#define USB_VID                     0x0D8C
-#define USB_PID                     0x000C
+#define USB_VID                     0x1209
+#define USB_PID                     0x7388
 #define USB_BCD                     0x0200
 
-#define USB_STRING_MANUFACTURER     "C-Media Electronics, Inc."
-#define USB_STRING_PRODUCT          "CM108 Audio Controller"
+#define USB_STRING_MANUFACTURER     "AIOC"
+#define USB_STRING_PRODUCT          "All-In-One-Cable"
 #define USB_STRING_AUDIOITF         "AIOC Audio"
 #define USB_STRING_AUDIOIN          "AIOC Audio In"
 #define USB_STRING_AUDIOOUT         "AIOC Audio Out"
@@ -54,7 +47,7 @@ enum USB_STRING_IDX {
 #define USB_STRING_AUDIOINCHAN      "AIOC Audio In Channel"
 #define USB_STRING_AUDIOOUTCHAN     "AIOC Audio Out Channel"
 #define USB_STRING_CDCITF           "AIOC CDC"
-#define USB_STRING_HIDITF           "CM108 Consumer Control"
+#define USB_STRING_HIDITF           "AIOC HID"
 #define USB_STRING_DFU_RT           "AIOC DFU Runtime"
 
 /* Endpoints */
@@ -66,60 +59,6 @@ enum USB_STRING_IDX {
 #define EPNUM_CDC_0_OUT     0x04
 #define EPNUM_CDC_0_IN      0x84
 #define EPNUM_CDC_0_NOTIF   0x85
-
-/* CM108-compatible HID consumer control report.
- *
- * Classic CM108/CM108B devices expose their VOL UP, VOL DOWN and MUTE
- * buttons as HID Consumer Control key events. That is different from the
- * UAC2 Feature Unit volume controls above/below in the audio descriptor.
- *
- * In plain terms:
- *   - UAC2 Feature Unit volume = host mixer controls the audio function.
- *   - HID Consumer Control     = device sends key events to the host.
- *
- * This block adds the HID side that many CM108-compatible applications
- * expect when they look for Volume Up, Volume Down and Mute events.
- *
- * Report payload layout for Report ID AIOC_HID_REPORT_ID_CM108:
- *   bit 0: Mute
- *   bit 1: Volume Up / Volume Increment
- *   bit 2: Volume Down / Volume Decrement
- *   bit 3..7: padding
- *
- * To emulate a normal key press, send one report with the wanted bit set and
- * then send one zero report to release the key. Holding the bit set behaves
- * like holding the key down; that is usually not what you want.
- *
- * Example payloads, excluding the Report ID byte handled by TinyUSB:
- *   AIOC_HID_CM108_VOL_UP  -> 0x02, then 0x00
- *   AIOC_HID_CM108_VOL_DN  -> 0x04, then 0x00
- *   AIOC_HID_CM108_MUTE    -> 0x01, then 0x00
- */
-#define AIOC_HID_REPORT_ID_CM108       0x01
-#define AIOC_HID_REPORT_ID_AIOC_CTRL   0x02
-#define AIOC_HID_CM108_MUTE            0x01
-#define AIOC_HID_CM108_VOL_UP          0x02
-#define AIOC_HID_CM108_VOL_DN          0x04
-#define AIOC_HID_CM108_REPORT_SIZE     0x01
-#define AIOC_HID_CM108_REPORT_DESC_LEN 31
-
-#define AIOC_HID_CM108_REPORT_DESCRIPTOR \
-  0x05, 0x0C,        /* Usage Page (Consumer) */\
-  0x09, 0x01,        /* Usage (Consumer Control) */\
-  0xA1, 0x01,        /* Collection (Application) */\
-  0x85, AIOC_HID_REPORT_ID_CM108, /* Report ID */\
-  0x09, 0xE2,        /* Usage (Mute) */\
-  0x09, 0xE9,        /* Usage (Volume Increment) */\
-  0x09, 0xEA,        /* Usage (Volume Decrement) */\
-  0x15, 0x00,        /* Logical Minimum (0) */\
-  0x25, 0x01,        /* Logical Maximum (1) */\
-  0x75, 0x01,        /* Report Size (1) */\
-  0x95, 0x03,        /* Report Count (3) */\
-  0x81, 0x02,        /* Input (Data, Variable, Absolute) */\
-  0x75, 0x05,        /* Report Size (5) */\
-  0x95, 0x01,        /* Report Count (1) */\
-  0x81, 0x03,        /* Input (Constant, Variable, Absolute) */\
-  0xC0               /* End Collection */
 
 /* Custom Audio Descriptor.
  * Courtesy of https://github.com/hathach/tinyusb/issues/1249#issuecomment-1148727765 */
@@ -219,28 +158,8 @@ enum USB_STRING_IDX {
     TUD_AUDIO_DESC_CS_AS_ISO_EP(AUDIO_CS_AS_ISO_DATA_EP_ATT_NON_MAX_PACKETS_OK, AUDIO_CTRL_NONE, AUDIO_CS_AS_ISO_DATA_EP_LOCK_DELAY_UNIT_UNDEFINED, 0x0000)
 
 
-/* Standard HID interface length used by the current configuration:
- *   9 bytes Interface Descriptor
- *   9 bytes HID Descriptor
- *   7 bytes Interrupt IN Endpoint Descriptor
- *
- * This is enough for CM108-like Volume Up/Down/Mute because those are sent
- * from the device to the host over the IN endpoint.
- */
-#define AIOC_HID_DESC_LEN          (9 + 9 + 7)
+#define AIOC_HID_DESC_LEN    (9 + 9 + 7)
 
-/* Optional HID IN+OUT descriptor length.
- * Use this only if you later emulate more of the old CM108 behaviour, such
- * as host-to-device HID OUT reports for register/GPIO-style handling.
- * Do not switch to this unless the configuration descriptor is changed too.
- */
-#define AIOC_HID_INOUT_DESC_LEN    (9 + 9 + 7 + 7)
-
-/* HID descriptor with one Interrupt IN endpoint.
- * Keep using this for the minimal and clean CM108-compatible VOL UP/VOL DN
- * implementation. The actual key definitions are in
- * AIOC_HID_CM108_REPORT_DESCRIPTOR, not in this interface descriptor.
- */
 #define AIOC_HID_DESCRIPTOR(_itfnum, _stridx, _boot_protocol, _report_desc_len, _epin, _epsize, _ep_interval) \
   /* Interface */\
   9, TUSB_DESC_INTERFACE, _itfnum, 0, 1, TUSB_CLASS_HID, (uint8_t)((_boot_protocol) ? (uint8_t)HID_SUBCLASS_BOOT : 0), _boot_protocol, _stridx,\
@@ -248,22 +167,6 @@ enum USB_STRING_IDX {
   9, HID_DESC_TYPE_HID, U16_TO_U8S_LE(0x0100), 0, 1, HID_DESC_TYPE_REPORT, U16_TO_U8S_LE(_report_desc_len),\
   /* Endpoint In */\
   7, TUSB_DESC_ENDPOINT, _epin, TUSB_XFER_INTERRUPT, U16_TO_U8S_LE(_epsize), _ep_interval
-
-/* Optional HID descriptor with Interrupt IN and Interrupt OUT endpoints.
- * This is provided for later expansion only. A real CM108 also has HID access
- * patterns beyond simple volume keys. If you need those, this descriptor is
- * one part of the job, but the firmware must also implement the matching
- * OUT report handling.
- */
-#define AIOC_HID_INOUT_DESCRIPTOR(_itfnum, _stridx, _boot_protocol, _report_desc_len, _epin, _epout, _epsize, _ep_interval) \
-  /* Interface */\
-  9, TUSB_DESC_INTERFACE, _itfnum, 0, 2, TUSB_CLASS_HID, (uint8_t)((_boot_protocol) ? (uint8_t)HID_SUBCLASS_BOOT : 0), _boot_protocol, _stridx,\
-  /* HID descriptor */\
-  9, HID_DESC_TYPE_HID, U16_TO_U8S_LE(0x0100), 0, 1, HID_DESC_TYPE_REPORT, U16_TO_U8S_LE(_report_desc_len),\
-  /* Endpoint In */\
-  7, TUSB_DESC_ENDPOINT, _epin, TUSB_XFER_INTERRUPT, U16_TO_U8S_LE(_epsize), _ep_interval,\
-  /* Endpoint Out */\
-  7, TUSB_DESC_ENDPOINT, _epout, TUSB_XFER_INTERRUPT, U16_TO_U8S_LE(_epsize), _ep_interval
 
 #define AIOC_CDC_DESC_LEN   TUD_CDC_DESC_LEN
 

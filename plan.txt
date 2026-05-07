@@ -1,0 +1,257 @@
+Plan: COS/Squelch als CM108 Volume-Down Event
+
+Ziel
+----
+Das AIOC soll sich fuer die CM108-Kompatibilitaet als
+
+  Vendor ID:  0x0d8c
+  Product ID: 0x000c
+  Hersteller: C-Media Electronics, Inc.
+  Geraet: CM108 Audio Controller
+
+melden und COS/Squelch soll beim Aktivwerden ein HID Consumer-Control
+Volume-Down Event ausloesen. Unter Linux soll das in evtest als
+KEY_VOLUMEDOWN sichtbar sein.
+
+
+Aktueller COS-Pfad im Code
+--------------------------
+1. COS bedeutet hier Carrier Operated Squelch und ist als "Virtual COS"
+   implementiert.
+
+2. Die COS-Erkennung passiert in stm32/aioc-fw/Src/usb_audio.c im
+   ADC1_2_IRQHandler().
+
+   Dort wird jedes ADC-Mikrofonsample gegen SETTINGS_REG_VCOS_LVLCTRL
+   verglichen:
+
+     abs(sample) > SETTINGS_REG_VCOS_LVLCTRL_THRSHLD
+
+   Wenn die Schwelle ueberschritten wird und das Mikrofon nicht stumm ist,
+   wird TIM17 per TIM17->EGR = TIM_EGR_UG angestossen.
+
+3. TIM17 ist der Halte-/Timeout-Timer fuer COS.
+
+   Der Timeout wird aus SETTINGS_REG_VCOS_TIMCTRL geladen. Default ist
+   200 ms in 12.4-Format:
+
+     SETTINGS_REG_VCOS_TIMCTRL_TIMEOUT_DFLT = (200 << 4)
+
+   TIM17 wird in Timeout_Timers_Init() konfiguriert.
+
+4. Wenn TIM17 durch ein neues COS-Ereignis gestartet wird, ruft
+   TIM17_IRQHandler() auf:
+
+     COS_VirtualSetState(0x01)
+
+   Wenn der COS-Timeout ablaeuft, ruft TIM17_IRQHandler() auf:
+
+     COS_VirtualSetState(0x00)
+
+5. COS_VirtualSetState() steht in stm32/aioc-fw/Src/cos.h.
+
+   Dort wird COS auf mehrere moegliche Ausgaenge verteilt:
+
+   - LED 0 zeigt den COS-Zustand.
+   - CM108 BTN1 kann aus VCOS gespeist werden und sendet Volume Up.
+   - CM108 BTN2 kann aus VCOS gespeist werden und sendet Volume Down.
+   - CM108 BTN3 kann aus VCOS gespeist werden und sendet Playback Mute.
+   - CM108 BTN4 kann aus VCOS gespeist werden und sendet Record Mute.
+   - Serial DCD/DSR/RI/BREAK koennen ebenfalls aus VCOS gespeist werden.
+
+6. Der fuer das Ziel wichtige Default ist bereits vorhanden:
+
+   In stm32/aioc-fw/Src/settings.h:
+
+     SETTINGS_REG_CM108_IOMUX1_BTN2SRC_DFLT =
+       SETTINGS_REG_CM108_IOMUX1_BTN2SRC_VCOS_MASK
+
+   Das bedeutet:
+
+     VCOS/COS -> CM108 BTN2 -> USB_HID_BUTTON_VOLDN
+
+7. USB_HID_BUTTON_VOLDN wird in stm32/aioc-fw/Src/usb_hid.c in das echte
+   HID Consumer-Control-Payloadbit fuer Volume Down uebersetzt:
+
+     internes VOLDN-Bit 0x02 -> AIOC_HID_CM108_VOL_DN 0x04
+
+   Report ID AIOC_HID_REPORT_ID_CM108 sendet dann den Consumer-Control
+   Report an den Host.
+
+
+Risiko im aktuellen Ablauf
+--------------------------
+COS_VirtualSetState() ruft USB_HIDSendButtonState() fuer jeden aktivierten
+CM108-IOMUX-Ausgang einzeln auf.
+
+Wenn mehrere CM108-IOMUX-Quellen gleichzeitig auf VCOS stehen, kann ein
+spaeterer Aufruf den vorherigen Buttonzustand ueberschreiben. Fuer das Ziel
+soll deshalb sichergestellt werden, dass fuer VCOS nur BTN2/VOLDN aktiv ist
+oder dass COS_VirtualSetState() spaeter auf eine zusammengefasste Maske
+umgebaut wird.
+
+Minimal fuer dieses Ziel:
+
+  BTN1/Volume Up  darf nicht aus VCOS gespeist werden.
+  BTN2/Volume Dn  muss aus VCOS gespeist werden.
+  BTN3/Mute       darf nicht aus VCOS gespeist werden.
+  BTN4/Mute       darf nicht aus VCOS gespeist werden.
+
+
+Umsetzungsplan
+--------------
+1. USB-ID auf CM108-kompatible Werte setzen.
+
+   Variante A: Firmware-Defaults fest setzen
+
+   In stm32/aioc-fw/Src/usb_descriptors.h:
+
+     USB_VID von 0x1209 auf 0x0d8c setzen.
+     USB_PID von 0x7388 auf 0x000c setzen.
+
+   Danach muss das gespeicherte Settings-Flash geloescht oder per
+   Settings_Default() neu initialisiert werden, weil settingsRegMap
+   SETTINGS_REG_USBID aus Flash wiederherstellen kann.
+
+   Variante B: per Settings/HID konfigurieren
+
+   SETTINGS_REG_USBID ist Register 0x08.
+   Layout:
+
+     bits  0..15 = VID
+     bits 16..31 = PID
+
+   Fuer VID 0x0d8c und PID 0x000c muss Register 0x08 diesen Wert bekommen:
+
+     0x000c0d8c
+
+   Danach Settings_Store() ausloesen und USB neu enumerieren.
+
+   Empfehlung fuer ein reproduzierbares CM108-Image: Variante A und
+   Settings-Flash beim Flashen/defaulten sauber zuruecksetzen.
+
+2. Hersteller- und Produktstrings anpassen.
+
+   In stm32/aioc-fw/Src/usb_descriptors.h:
+
+     USB_STRING_MANUFACTURER = "C-Media Electronics, Inc."
+     USB_STRING_PRODUCT      = "CM108 Audio Controller"
+
+   Optional HID-Interface-String neutral lassen oder auf "USB Audio Device"
+   setzen, wenn Linux/Anwendungen naeher an der CM108-Karte erscheinen sollen.
+
+3. COS/Squelch eindeutig auf Volume Down festlegen.
+
+   In stm32/aioc-fw/Src/settings.h die CM108-IOMUX-Defaults pruefen und bei
+   Bedarf explizit so setzen:
+
+     SETTINGS_REG_CM108_IOMUX0_BTN1SRC_DFLT =
+       SETTINGS_REG_CM108_IOMUX0_BTN1SRC_NONE_MASK
+
+     SETTINGS_REG_CM108_IOMUX1_BTN2SRC_DFLT =
+       SETTINGS_REG_CM108_IOMUX1_BTN2SRC_VCOS_MASK
+
+     SETTINGS_REG_CM108_IOMUX2_BTN3SRC_DFLT =
+       SETTINGS_REG_CM108_IOMUX2_BTN3SRC_NONE_MASK
+
+     SETTINGS_REG_CM108_IOMUX3_BTN4SRC_DFLT =
+       SETTINGS_REG_CM108_IOMUX3_BTN4SRC_NONE_MASK
+
+   Aktuell ist BTN2 bereits auf VCOS und BTN3/BTN4 sind NONE. BTN1 steht
+   aktuell default auf IN2, nicht VCOS. Das ist fuer "COS -> VOLDN" ok,
+   solange IN2 nicht stoert.
+
+4. COS_VirtualSetState() robuster machen.
+
+   Optional, aber technisch sauber:
+
+   In stm32/aioc-fw/Src/cos.h nicht mehrere USB_HIDSendButtonState()-Aufrufe
+   hintereinander senden, sondern erst eine Buttonmaske bilden und dann genau
+   einen HID-Report senden.
+
+   Beispiel-Logik:
+
+     uint8_t buttons = 0x00;
+
+     if (VCOS -> BTN1 && state) buttons |= USB_HID_BUTTON_VOLUP;
+     if (VCOS -> BTN2 && state) buttons |= USB_HID_BUTTON_VOLDN;
+     if (VCOS -> BTN3 && state) buttons |= USB_HID_BUTTON_PLAYMUTE;
+     if (VCOS -> BTN4 && state) buttons |= USB_HID_BUTTON_RECMUTE;
+
+     USB_HIDSendButtonState(buttons);
+
+   Vorteil:
+
+     Wenn spaeter mehrere CM108-Buttons aus COS gespeist werden, ueberschreibt
+     kein spaeterer Aufruf mehr den frueheren Zustand.
+
+5. Consumer-Control-Report beibehalten.
+
+   Der aktive HID-Report-Descriptor muss weiterhin KEY_MUTE, KEY_VOLUMEUP und
+   KEY_VOLUMEDOWN anbieten. Das ist der Teil, den evtest bereits korrekt zeigt.
+
+   Wichtig fuer VOLDN:
+
+     USB_HID_BUTTON_VOLDN muss intern 0x02 bleiben.
+     Vor dem Senden muss es auf AIOC_HID_CM108_VOL_DN 0x04 uebersetzt werden.
+
+6. Build und Flash.
+
+   Sauber neu bauen, nicht nur inkrementell:
+
+     usb_descriptors.h
+     usb_descriptors.c
+     usb_hid.h
+     usb_hid.c
+     cos.h
+     settings.h
+
+   Danach Firmware flashen.
+
+   Wenn SETTINGS_REG_USBID oder IOMUX-Werte vorher im Flash gespeichert waren:
+
+     Settings-Flash loeschen oder per HID Settings_Default() ausloesen.
+     Anschliessend USB neu enumerieren.
+
+7. Test auf Linux.
+
+   Erwartete lsusb-Ausgabe:
+
+     ID 0d8c:000c C-Media Electronics, Inc. CM108 Audio Controller
+
+   Erwartete evtest-Faehigkeiten:
+
+     KEY_MUTE
+     KEY_VOLUMEDOWN
+     KEY_VOLUMEUP
+
+   Testablauf:
+
+     evtest /dev/input/eventX
+     Squelch/COS ausloesen
+
+   Erwartete Events bei COS aktiv:
+
+     EV_MSC MSC_SCAN ...
+     EV_KEY KEY_VOLUMEDOWN 1
+     EV_SYN
+
+   Erwartete Events bei COS inaktiv bzw. Timeout:
+
+     EV_MSC MSC_SCAN ...
+     EV_KEY KEY_VOLUMEDOWN 0
+     EV_SYN
+
+8. Wenn KEY_VOLUMEDOWN gelistet wird, aber kein Event kommt.
+
+   Dann liegt der Fehler nicht mehr im HID-Descriptor, sondern im Laufzeitpfad:
+
+   - Wird ADC1_2_IRQHandler() aufgerufen?
+   - Ueberschreitet das Mikrofonsample SETTINGS_REG_VCOS_LVLCTRL?
+   - Wird TIM17->EGR gesetzt?
+   - Laeuft TIM17_IRQHandler()?
+   - Wird SETTINGS_REG_INFO_AIOC0_VCOSSTATE_MASK gesetzt?
+   - Ruft COS_VirtualSetState(0x01) genau einen VOLDN-Report ab?
+   - Sendet USB_HIDSendButtonState(USB_HID_BUTTON_VOLDN) Report ID 1 mit
+     Payload 0x04?
+

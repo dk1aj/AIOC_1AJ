@@ -18,7 +18,6 @@
 /* We try to stay on this target with the buffer level */
 #define SPEAKER_BUFFERLVL_TARGET (5 * CFG_TUD_AUDIO_EP_SZ_OUT) /* Keep our buffer at 5 frames, i.e. 5ms at full-speed USB and maximum sample rate */
 
-
 typedef enum {
     SAMPLERATE_48000, /* The high-quality default */
     SAMPLERATE_32000, /* For completeness sake, support 32 kHz as well */
@@ -577,7 +576,6 @@ bool tud_audio_rx_done_post_read_cb(uint8_t rhport, uint16_t n_bytes_received, u
     return true;
 }
 
-
 bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const * p_request)
 {
     (void) rhport;
@@ -1106,6 +1104,10 @@ static void Timeout_Timers_Init(void)
     uint32_t timerFreq = (HAL_RCC_GetHCLKFreq() == HAL_RCC_GetPCLK2Freq()) ? HAL_RCC_GetPCLK2Freq() : 2 * HAL_RCC_GetPCLK2Freq();
     uint32_t pttTimeout = (settingsRegMap[SETTINGS_REG_VPTT_TIMCTRL] & SETTINGS_REG_VPTT_TIMCTRL_TIMEOUT_MASK) >> SETTINGS_REG_VPTT_TIMCTRL_TIMEOUT_OFFS;
     uint32_t cosTimeout = (settingsRegMap[SETTINGS_REG_VCOS_TIMCTRL] & SETTINGS_REG_VCOS_TIMCTRL_TIMEOUT_MASK) >> SETTINGS_REG_VCOS_TIMCTRL_TIMEOUT_OFFS;
+
+    if (cosTimeout == 0) {
+        cosTimeout = 1;
+    }
 
     __HAL_RCC_TIM16_CLK_ENABLE();
     __HAL_RCC_TIM17_CLK_ENABLE();

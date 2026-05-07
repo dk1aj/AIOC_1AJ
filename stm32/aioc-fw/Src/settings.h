@@ -71,7 +71,10 @@ extern uint32_t settingsRegMap[SETTINGS_REGMAP_SIZE];
 #define SETTINGS_REG_CM108_IOMUX0                           0x44
 #define SETTINGS_REG_CM108_IOMUX0_DEFAULT                   (SETTINGS_REG_CM108_IOMUX0_BTN1SRC_DFLT)
 /* BTN1SRC: Volume-Up Button source */
-#define SETTINGS_REG_CM108_IOMUX0_BTN1SRC_DFLT              (SETTINGS_REG_CM108_IOMUX0_BTN1SRC_IN2_MASK)
+/* CM108 COS profile: BTN1/VOLUP is intentionally unused by default.
+ * Only BTN2/VOLDN is used for SvxLink squelch signaling.
+ */
+#define SETTINGS_REG_CM108_IOMUX0_BTN1SRC_DFLT              (SETTINGS_REG_CM108_IOMUX0_BTN1SRC_NONE_MASK)
 #define SETTINGS_REG_CM108_IOMUX0_BTN1SRC_OFFS              0
 #define SETTINGS_REG_CM108_IOMUX0_BTN1SRC_MASK              0xFFFFFFFFUL
 #define SETTINGS_REG_CM108_IOMUX0_BTN1SRC_NONE_MASK         0x00000000UL
@@ -83,6 +86,16 @@ extern uint32_t settingsRegMap[SETTINGS_REGMAP_SIZE];
 #define SETTINGS_REG_CM108_IOMUX1                           0x45
 #define SETTINGS_REG_CM108_IOMUX1_DEFAULT                   (SETTINGS_REG_CM108_IOMUX1_BTN2SRC_DFLT)
 /* BTN2SRC: Volume-Down Button source */
+/* This is the target mapping for CM108-compatible COS/Squelch signaling:
+ * VCOS asserted -> HID Consumer Control Volume Down press.
+ * VCOS released -> HID Consumer Control release report.
+ *
+ * Important: VCOS is audio-threshold based and releases after
+ * SETTINGS_REG_VCOS_TIMCTRL if no further audio crosses the threshold. It
+ * will not behave like a held hardware COS/PTT input during silence. For a
+ * true held signal, configure this register to BTN2SRC_IN1 or BTN2SRC_IN2 and
+ * wire the radio COS/PTT output to the matching AIOC input pin.
+ */
 #define SETTINGS_REG_CM108_IOMUX1_BTN2SRC_DFLT              (SETTINGS_REG_CM108_IOMUX1_BTN2SRC_VCOS_MASK)
 #define SETTINGS_REG_CM108_IOMUX1_BTN2SRC_OFFS              SETTINGS_REG_CM108_IOMUX0_BTN1SRC_OFFS
 #define SETTINGS_REG_CM108_IOMUX1_BTN2SRC_MASK              SETTINGS_REG_CM108_IOMUX0_BTN1SRC_MASK
@@ -228,8 +241,13 @@ extern uint32_t settingsRegMap[SETTINGS_REGMAP_SIZE];
 /* Virtual COS timing control register */
 #define SETTINGS_REG_VCOS_TIMCTRL                           0x94
 #define SETTINGS_REG_VCOS_TIMCTRL_DEFAULT                   (SETTINGS_REG_VCOS_TIMCTRL_TIMEOUT_DFLT)
-/* TIMEOUT: Timeout (trailing) time in milliseconds in 12.4 format  */
-#define SETTINGS_REG_VCOS_TIMCTRL_TIMEOUT_DFLT              ((uint32_t) (200 << 4) << SETTINGS_REG_VCOS_TIMCTRL_TIMEOUT_OFFS)
+/* TIMEOUT: VCOS hang time in milliseconds in 12.4 format.
+ *
+ * Audio-only COS has no separate carrier-off signal, so it must hold COS open
+ * briefly after the last sample above threshold. 3000 ms is long enough for
+ * longer speech pauses without keeping SvxLink open for minutes.
+ */
+#define SETTINGS_REG_VCOS_TIMCTRL_TIMEOUT_DFLT              ((uint32_t) (3000UL << 4) << SETTINGS_REG_VCOS_TIMCTRL_TIMEOUT_OFFS)
 #define SETTINGS_REG_VCOS_TIMCTRL_TIMEOUT_OFFS              0
 #define SETTINGS_REG_VCOS_TIMCTRL_TIMEOUT_MASK              0x0000FFFFUL
 

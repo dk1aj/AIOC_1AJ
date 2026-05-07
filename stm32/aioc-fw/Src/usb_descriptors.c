@@ -81,10 +81,21 @@ uint8_t const* tud_descriptor_device_cb(void) {
 //--------------------------------------------------------------------+
 
 uint8_t const desc_hid_report[] = {
-    /* CM108 emulation. */
+    /* Report ID 1: real HID Consumer Control keys.
+     * These usages are what Linux turns into /dev/input/event* EV_KEY events
+     * for KEY_MUTE, KEY_VOLUMEUP and KEY_VOLUMEDOWN.
+     */
+    AIOC_HID_CM108_REPORT_DESCRIPTOR,
+
+    /* Report ID 2: AIOC/CM108 GPIO and settings compatibility report.
+     * The old descriptor had no report ID. Since Report ID 1 is now used for
+     * Consumer Control keys, this legacy 4-byte input/output and 6-byte
+     * feature report must also be explicitly tagged.
+     */
     HID_USAGE_PAGE   ( HID_USAGE_PAGE_CONSUMER ),
     HID_USAGE        ( HID_USAGE_CONSUMER_CONTROL ),
     HID_COLLECTION   ( HID_COLLECTION_APPLICATION ),
+      HID_REPORT_ID    ( AIOC_HID_REPORT_ID_AIOC_CTRL              )
       /* Volume Up/Dn */
       HID_LOGICAL_MIN ( 0x00                                    ),
       HID_LOGICAL_MAX ( 0x01                                    ),

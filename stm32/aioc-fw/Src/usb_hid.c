@@ -4,28 +4,73 @@
 #include "settings.h"
 #include "usb_descriptors.h"
 
+#define USB_HID_CM108_REPORT_LEN  AIOC_HID_CM108_REPORT_SIZE
 #define USB_HID_INOUT_REPORT_LEN  4
 #define USB_HID_FEATURE_REPORT_LEN 6
 
-static uint8_t buttonState = 0x00;
+static volatile uint8_t buttonState = 0x00;
+static volatile uint8_t pendingButtonState = 0x00;
+static volatile bool pendingButtonReport = false;
 static uint8_t gpioState = 0x00;
 static uint8_t currentAddress = 0x0000;
+
+static uint8_t MakeCM108ConsumerButtons(uint8_t internalButtons)
+{
+    uint8_t consumerButtons = 0x00;
+
+    /* Translate from the historical internal AIOC button layout to the real
+     * HID Consumer Control payload declared in AIOC_HID_CM108_REPORT_DESCRIPTOR.
+     * This avoids the common failure mode where internal VOLDN bit 1 is sent
+     * directly and Linux sees it as Volume Up because Report ID 1 uses:
+     *   bit 0 = Mute, bit 1 = Volume Up, bit 2 = Volume Down.
+     */
+    if (internalButtons & USB_HID_BUTTON_VOLUP) {
+        consumerButtons |= AIOC_HID_CM108_VOL_UP;
+    }
+
+    if (internalButtons & USB_HID_BUTTON_VOLDN) {
+        consumerButtons |= AIOC_HID_CM108_VOL_DN;
+    }
+
+    if (internalButtons & (USB_HID_BUTTON_PLAYMUTE | USB_HID_BUTTON_RECMUTE)) {
+        consumerButtons |= AIOC_HID_CM108_MUTE;
+    }
+
+    return consumerButtons;
+}
 
 static void MakeReport(uint8_t * buffer)
 {
     /* TODO: Read the actual states of the GPIO input hardware pins. */
-    buffer[0] = buttonState & 0x0F;
+    buffer[0] = ((uint8_t) buttonState) & 0x0F;
     buffer[1] = gpioState;
     buffer[2] = 0x00;
     buffer[3] = 0x00;
 }
 
-static bool SendReport(void)
+static bool SendAIOCControlReport(void)
 {
     uint8_t reportBuffer[USB_HID_INOUT_REPORT_LEN];
     MakeReport(reportBuffer);
 
-    return tud_hid_report(0, reportBuffer, sizeof(reportBuffer));
+    return tud_hid_report(AIOC_HID_REPORT_ID_AIOC_CTRL, reportBuffer, sizeof(reportBuffer));
+}
+
+static bool SendCM108ConsumerReport(uint8_t internalButtonMask)
+{
+    uint8_t reportBuffer[USB_HID_CM108_REPORT_LEN];
+
+    if (!tud_hid_ready()) {
+        return false;
+    }
+
+    /* Report ID 1 carries exactly one Consumer Control payload byte:
+     * bit 0 = Mute, bit 1 = Volume Up, bit 2 = Volume Down.
+     * TinyUSB sends the Report ID separately from this payload buffer.
+     */
+    reportBuffer[0] = MakeCM108ConsumerButtons(internalButtonMask);
+
+    return tud_hid_report(AIOC_HID_REPORT_ID_CM108, reportBuffer, sizeof(reportBuffer));
 }
 
 static void ControlPTT(uint8_t gpio)
@@ -73,18 +118,27 @@ static void ControlPTT(uint8_t gpio)
 uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t* buffer, uint16_t reqlen)
 {
     (void) itf;
-    (void) report_id;
-    (void) buffer;
-    (void) reqlen;
 
     switch (report_type) {
         case HID_REPORT_TYPE_INPUT:
+            if (report_id == AIOC_HID_REPORT_ID_CM108) {
+                TU_ASSERT(reqlen >= USB_HID_CM108_REPORT_LEN, 0);
+
+                /* Let GET_REPORT return the same one-byte Consumer Control
+                 * state that the interrupt endpoint sends for evdev events.
+                 */
+                buffer[0] = MakeCM108ConsumerButtons((uint8_t) buttonState);
+                return USB_HID_CM108_REPORT_LEN;
+            }
+
+            TU_ASSERT(report_id == AIOC_HID_REPORT_ID_AIOC_CTRL || report_id == 0, 0);
             TU_ASSERT(reqlen >= USB_HID_INOUT_REPORT_LEN, 0);
 
             MakeReport(buffer);
             return USB_HID_INOUT_REPORT_LEN;
 
         case HID_REPORT_TYPE_FEATURE:
+            TU_ASSERT(report_id == AIOC_HID_REPORT_ID_AIOC_CTRL || report_id == 0, 0);
             TU_ASSERT(reqlen >= USB_HID_FEATURE_REPORT_LEN, 0);
             uint32_t data;
             Settings_RegRead(currentAddress, &data);
@@ -110,13 +164,16 @@ uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t
 void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t report_type, uint8_t const* buffer, uint16_t bufsize)
 {
     (void) itf;
-    (void) report_id;
 
     switch (report_type) {
         case HID_REPORT_TYPE_OUTPUT:
+            TU_ASSERT(report_id == AIOC_HID_REPORT_ID_AIOC_CTRL || report_id == 0, /* */);
             TU_ASSERT(bufsize == USB_HID_INOUT_REPORT_LEN, /* */);
 
-            /* Output report, emulate CM108 behaviour */
+            /* Report ID 2 output report: emulate the CM108 GPIO/PTT behaviour.
+             * Consumer Control key presses never arrive here; they are device
+             * to host input reports on Report ID 1.
+             */
             if ((buffer[0] & 0xC0) == 0) {
                 uint8_t gpioChange = gpioState ^ buffer[1];
                 gpioState = buffer[1];
@@ -132,12 +189,13 @@ void tud_hid_set_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t rep
                  * interrupt pipe.
                  */
                 if (gpioChange) {
-                    SendReport();
+                    SendAIOCControlReport();
                 }
             }
             break;
 
         case HID_REPORT_TYPE_FEATURE:
+            TU_ASSERT(report_id == AIOC_HID_REPORT_ID_AIOC_CTRL || report_id == 0, /* */);
             TU_ASSERT(bufsize == USB_HID_FEATURE_REPORT_LEN, /* */);
             uint8_t ctrlWord = ((((uint8_t)  buffer[0]) <<  0) );
             uint8_t address =  ((((uint8_t)  buffer[1]) <<  0) );
@@ -187,9 +245,50 @@ void USB_HIDInit(void)
 
 }
 
+void USB_HIDTask(void)
+{
+    uint8_t reportState;
+
+    if (!pendingButtonReport) {
+        return;
+    }
+
+    reportState = pendingButtonState;
+
+    /* COS/Squelch can change from a timer interrupt while the HID IN endpoint
+     * is still busy with the previous report. Keep the latest wanted state
+     * pending and retry it here, so the important 0x00 release report is not
+     * lost after a Volume Down press.
+     */
+    if (SendCM108ConsumerReport(reportState)) {
+        if (pendingButtonState == reportState) {
+            pendingButtonReport = false;
+        }
+    }
+}
+
 bool USB_HIDSendButtonState(uint8_t buttonMask)
 {
     buttonState = buttonMask;
+    pendingButtonState = buttonMask;
+    pendingButtonReport = true;
 
-    return SendReport();
+    /* Send a CM108-compatible Consumer Control event. Callers already send
+     * a non-zero mask on press and 0x00 on release, which is the sequence
+     * Linux evdev expects for a normal key tap.
+     *
+     * If TinyUSB is busy, USB_HIDTask() keeps retrying the pending state.
+     */
+    USB_HIDTask();
+
+    return !pendingButtonReport;
+}
+
+void tud_hid_report_complete_cb(uint8_t itf, uint8_t const* report, uint16_t len)
+{
+    (void) itf;
+    (void) report;
+    (void) len;
+
+    USB_HIDTask();
 }

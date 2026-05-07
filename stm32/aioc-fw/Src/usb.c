@@ -122,5 +122,6 @@ void USB_Task(void)
 {
     USB_SerialTask();
     tud_task();
+    USB_HIDTask();
 }
 
